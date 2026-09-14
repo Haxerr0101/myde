@@ -1,0 +1,46 @@
+cd /root/myde/compositor
+
+cat > src/state.rs <<'EOF'
+use smithay::{
+    delegate_compositor,
+    wayland::compositor::{
+        CompositorClientState,
+        CompositorHandler,
+        CompositorState,
+    },
+    reexports::wayland_server::{
+        protocol::wl_surface::WlSurface,
+        Client,
+        DisplayHandle,
+    },
+};
+
+pub struct MyCompositor {
+    pub compositor_state: CompositorState,
+}
+
+impl MyCompositor {
+    pub fn new(display: &DisplayHandle) -> Self {
+        Self {
+            compositor_state: CompositorState::new(display),
+        }
+    }
+}
+
+impl CompositorHandler for MyCompositor {
+    fn compositor_state(&mut self) -> &mut CompositorState {
+        &mut self.compositor_state
+    }
+
+    fn client_compositor_state<'a>(
+        &self,
+        client: &'a Client,
+    ) -> &'a CompositorClientState {
+        self.compositor_state
+            .client_state(client)
+    }
+
+    fn commit(&mut self, _surface: &WlSurface) {}
+}
+
+delegate_compositor!(MyCompositor);

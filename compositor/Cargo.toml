@@ -1,0 +1,20 @@
+[package]
+name = "myde-compositor"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+smithay = { version = "0.7.0", default-features = false, features = [
+    "wayland_frontend",
+    "wayland-protocols",
+    "desktop",
+    "backend_winit",
+    "renderer_gl",
+    "renderer_pixman",
+] }
+
+drm-fourcc = "2.2"
+wayland-client = "0.31.11"
+libc = "0.2"
+
+winit = "0.30.13"

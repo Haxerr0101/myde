@@ -1,0 +1,173 @@
+use std::{
+    fs::File,
+    io::{BufWriter, Write},
+    os::unix::io::AsFd,
+};
+
+use wayland_client::{
+    delegate_noop,
+    protocol::{
+        wl_buffer,
+        wl_compositor,
+        wl_registry,
+        wl_shm,
+        wl_shm_pool,
+        wl_surface,
+    },
+    Connection,
+    Dispatch,
+    QueueHandle,
+};
+
+struct State {
+    surface: Option<wl_surface::WlSurface>,
+    buffer: Option<wl_buffer::WlBuffer>,
+    pool: Option<wl_shm_pool::WlShmPool>,
+    file: Option<File>,
+}
+
+impl Dispatch<wl_registry::WlRegistry, ()> for State {
+    fn event(
+        state: &mut Self,
+        registry: &wl_registry::WlRegistry,
+        event: wl_registry::Event,
+        _: &(),
+        _: &Connection,
+        qh: &QueueHandle<Self>,
+    ) {
+        if let wl_registry::Event::Global {
+            name,
+            interface,
+            version: _,
+        } = event
+        {
+            match interface.as_str() {
+                "wl_compositor" => {
+                    let compositor =
+                        registry.bind::<wl_compositor::WlCompositor, _, _>(
+                            name,
+                            1,
+                            qh,
+                            (),
+                        );
+
+                    let surface = compositor.create_surface(qh, ());
+
+                    println!("Created wl_surface.");
+
+                    state.surface = Some(surface);
+                }
+
+                "wl_shm" => {
+                    let shm =
+                        registry.bind::<wl_shm::WlShm, _, _>(
+                            name,
+                            1,
+                            qh,
+                            (),
+                        );
+
+                    let width: u32 = 128;
+                    let height: u32 = 128;
+                    let stride = width * 4;
+                    let size = stride * height;
+
+                    let mut file = tempfile::tempfile().unwrap();
+
+                    draw(&mut file, width, height);
+
+                    let pool = shm.create_pool(
+                        file.as_fd(),
+                        size as i32,
+                        qh,
+                        (),
+                    );
+
+                    let buffer = pool.create_buffer(
+                        0,
+                        width as i32,
+                        height as i32,
+                        stride as i32,
+                        wl_shm::Format::Argb8888,
+                        qh,
+                        (),
+                    );
+
+                    println!(
+                        "Created {}x{} ARGB8888 SHM buffer.",
+                        width, height
+                    );
+
+                    state.file = Some(file);
+                    state.pool = Some(pool);
+                    state.buffer = Some(buffer.clone());
+
+                    if let Some(surface) = &state.surface {
+                        surface.attach(Some(&buffer), 0, 0);
+                        surface.damage(0, 0, width as i32, height as i32);
+                        surface.commit();
+
+                        println!("Attached SHM buffer and committed surface.");
+                    }
+                }
+
+                _ => {}
+            }
+        }
+    }
+}
+
+delegate_noop!(State: ignore wl_compositor::WlCompositor);
+delegate_noop!(State: ignore wl_surface::WlSurface);
+delegate_noop!(State: ignore wl_shm::WlShm);
+delegate_noop!(State: ignore wl_shm_pool::WlShmPool);
+delegate_noop!(State: ignore wl_buffer::WlBuffer);
+
+fn draw(file: &mut File, width: u32, height: u32) {
+    let mut writer = BufWriter::new(file);
+
+    for y in 0..height {
+        for x in 0..width {
+            let r = ((x * 255) / width) as u8;
+            let g = ((y * 255) / height) as u8;
+            let b = 80u8;
+            let a = 255u8;
+
+            // ARGB8888, little-endian memory layout = B G R A.
+            writer.write_all(&[b, g, r, a]).unwrap();
+        }
+    }
+
+    writer.flush().unwrap();
+}
+
+fn main() -> Result<(), Box<dyn std::error::Error>> {
+    println!("Starting MyDE SHM test client...");
+
+    let conn = Connection::connect_to_env()?;
+
+    let mut event_queue = conn.new_event_queue();
+    let qh = event_queue.handle();
+
+    let display = conn.display();
+    display.get_registry(&qh, ());
+
+    let mut state = State {
+        surface: None,
+        buffer: None,
+        pool: None,
+        file: None,
+    };
+
+    loop {
+        event_queue.blocking_dispatch(&mut state)?;
+
+        if state.surface.is_some() && state.buffer.is_some() {
+            break;
+        }
+    }
+
+    println!("SHM test client finished.");
+
+    Ok(())
+}

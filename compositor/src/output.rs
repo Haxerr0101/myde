@@ -1,0 +1,122 @@
+use std::{
+    fs::File,
+    os::fd::OwnedFd,
+};
+
+use smithay::{
+    backend::{
+        allocator::gbm::{GbmAllocator, GbmBufferFlags, GbmDevice},
+        drm::{
+            DrmDevice,
+            DrmDeviceFd,
+        },
+    },
+    reexports::drm::control::Device,
+    utils::DeviceFd,
+};
+
+pub struct MyOutput {
+    pub drm: DrmDevice,
+    pub gbm: GbmDevice<DrmDeviceFd>,
+    pub allocator: GbmAllocator<DrmDeviceFd>,
+}
+
+impl MyOutput {
+    pub fn new() -> Result<Self, Box<dyn std::error::Error>> {
+        println!("MyDE: opening DRM device /dev/dri/card0...");
+
+        let file = File::options()
+            .read(true)
+            .write(true)
+            .open("/dev/dri/card0")?;
+
+        println!("MyDE: DRM device opened.");
+
+        let owned_fd: OwnedFd = file.into();
+
+        let device_fd = DeviceFd::from(owned_fd);
+        let drm_fd = DrmDeviceFd::new(device_fd);
+
+        println!("MyDE: initializing Smithay DRM device...");
+
+        let (drm, _notifier) = DrmDevice::new(drm_fd.clone(), false)?;
+
+        println!("MyDE: Smithay DRM device initialized.");
+
+        let resources = drm.resource_handles()?;
+
+        println!(
+            "MyDE: connectors: {}",
+            resources.connectors().len()
+        );
+
+        println!(
+            "MyDE: CRTCs: {}",
+            resources.crtcs().len()
+        );
+
+        println!(
+            "MyDE: encoders: {}",
+            resources.encoders().len()
+        );
+
+        println!(
+            "MyDE: framebuffers: {}",
+            resources.framebuffers().len()
+        );
+
+        for connector_handle in resources.connectors() {
+            let connector = drm.get_connector(
+                *connector_handle,
+                false,
+            )?;
+
+            println!(
+                "MyDE: connector {:?}",
+                connector_handle
+            );
+
+            println!(
+                "MyDE:   interface: {:?}",
+                connector.interface()
+            );
+
+            println!(
+                "MyDE:   state: {:?}",
+                connector.state()
+            );
+
+            for mode in connector.modes() {
+                println!(
+                    "MyDE:   mode: {}x{} @ {} Hz",
+                    mode.size().0,
+                    mode.size().1,
+                    mode.vrefresh()
+                );
+            }
+        }
+
+        println!("MyDE: creating GBM device...");
+
+        let gbm = GbmDevice::new(drm_fd.clone())?;
+
+        println!("MyDE: GBM device initialized.");
+
+        println!("MyDE: creating GBM allocator...");
+
+        let allocator = GbmAllocator::new(
+            gbm.clone(),
+            GbmBufferFlags::RENDERING,
+        );
+
+        println!("MyDE: GBM allocator initialized.");
+
+        println!("MyDE: DRM + GBM output backend ready.");
+
+        Ok(Self {
+            drm,
+            gbm,
+            allocator,
+        })
+    }
+}
